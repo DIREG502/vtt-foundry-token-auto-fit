@@ -2,19 +2,19 @@
   "id": "token-border-autofit",
   "title": "Token Border Auto-Fit",
   "description": "Finds the border painted into token art (hexagon, circle or square — even when it is a gradient, thin, or partly covered by the art) and sets the token's texture scale and anchor so that border sits exactly on the token's grid shape. Hex (pointy and flat), square and gridless scenes; manual alignment window; batch fitting; stand-alone macro.",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "authors": [
     {
       "name": "DIREG502"
     }
   ],
-  "url": "https://github.com/DIREG502/token-border-autofit",
-  "manifest": "https://github.com/DIREG502/token-border-autofit/releases/latest/download/module.json",
-  "download": "https://github.com/DIREG502/token-border-autofit/releases/download/v0.1.0/module.zip",
+  "url": "https://github.com/DIREG502/vtt-foundry-token-border-auto-fit",
+  "manifest": "https://github.com/DIREG502/vtt-foundry-token-border-auto-fit/releases/latest/download/module.json",
+  "download": "https://github.com/DIREG502/vtt-foundry-token-border-auto-fit/releases/download/v1.0.0/module.zip",
   "license": "LICENSE",
   "readme": "README.md",
   "changelog": "CHANGELOG.md",
-  "bugs": "https://github.com/DIREG502/token-border-autofit/issues",
+  "bugs": "https://github.com/DIREG502/vtt-foundry-token-border-auto-fit/issues",
   "compatibility": {
     "minimum": "12",
     "verified": "13"
@@ -39,8 +39,14 @@
   ],
   "flags": {
     "hotReload": {
-      "extensions": ["css", "json"],
-      "paths": ["styles", "lang"]
+      "extensions": [
+        "css",
+        "json"
+      ],
+      "paths": [
+        "styles",
+        "lang"
+      ]
     }
   }
 }

@@ -19,7 +19,7 @@ hex size 1/2/3…, pointy-top or flat-top, square grids and gridless scenes.
 **Manifest URL** (Foundry → *Add-on Modules* → *Install Module* → paste into *Manifest URL*):
 
 ```
-https://github.com/DIREG502/token-border-autofit/releases/latest/download/module.json
+https://github.com/DIREG502/vtt-foundry-token-border-auto-fit/releases/latest/download/module.json
 ```
 
 Manual install: download `module.zip` from the latest release and unzip it to
