@@ -7,12 +7,12 @@
   "scripts": {
     "gen:samples": "node tools/generate-samples.mjs",
     "test:detect": "node tools/test-detect.mjs",
-    "test:unit": "node --test tests/",
-    "test": "node --test tests/ && node tools/test-detect.mjs",
+    "test:unit": "node --test \"tests/**/*.test.js\"",
+    "test": "node --test \"tests/**/*.test.js\" && node tools/test-detect.mjs",
     "bench": "node tools/bench.mjs",
     "build:macro": "node tools/build-macro.mjs",
     "check": "node tools/check-package.mjs",
-    "verify": "node tools/check-package.mjs && node --test tests/ && node tools/test-detect.mjs && node tools/build-macro.mjs",
+    "verify": "node tools/check-package.mjs && node --test \"tests/**/*.test.js\" && node tools/test-detect.mjs && node tools/build-macro.mjs",
     "harness": "python dev/serve.py 8766"
   },
   "license": "MIT",
