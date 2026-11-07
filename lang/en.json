@@ -1,0 +1,107 @@
+{
+  "TBAF": {
+    "Settings": {
+      "mode": {
+        "Name": "Automatic fitting",
+        "Hint": "What to do when a token is created or its image changes. Auto: apply immediately when detection is confident enough. Ask: show a prompt with Apply / Adjust buttons. Off: only fit when you press the button.",
+        "Choices": { "auto": "Auto (apply when confident)", "ask": "Ask first", "off": "Off (manual only)" }
+      },
+      "confidenceThreshold": {
+        "Name": "Confidence threshold",
+        "Hint": "Detections below this confidence are never applied silently; you get the manual alignment window instead."
+      },
+      "referenceEdge": {
+        "Name": "Border line to align",
+        "Hint": "Which line of the painted border should sit on the token's grid shape: its outer edge, the middle of the band, or its inner edge.",
+        "Choices": { "outer": "Outer edge", "center": "Centre of the band", "inner": "Inner edge" }
+      },
+      "aspectMode": {
+        "Name": "Proportions",
+        "Hint": "Stretch: match the token shape's bounding box exactly (width and height separately). Keep: scale uniformly so the border fits inside the box. Auto: stretch only when the difference is small (up to 8 %), otherwise keep proportions — useful for size 2+ hex tokens whose box is not hex-shaped.",
+        "Choices": { "stretch": "Stretch to the shape's box", "contain": "Keep proportions", "auto": "Auto" }
+      },
+      "ringBehavior": {
+        "Name": "Dynamic Token Ring",
+        "Hint": "Tokens using Foundry's dynamic ring frame the art themselves. Skip leaves them alone (with a warning); Apply fits them anyway.",
+        "Choices": { "skip": "Skip and warn", "apply": "Fit anyway" }
+      },
+      "pf2eAutoscale": {
+        "Name": "PF2e: turn off token autoscale when fitting",
+        "Hint": "Pathfinder 2e overwrites token scale for small creatures while autoscale is on. Fitting a token turns autoscale off for that token so the fit stays."
+      },
+      "prototypeTokens": {
+        "Name": "Fit prototype tokens",
+        "Hint": "Also detect and fit when an actor's prototype token image changes. Tokens created from a fitted prototype are re-fitted for the scene they are placed on."
+      },
+      "tryOtherShapes": {
+        "Name": "Try other border shapes",
+        "Hint": "If the shape expected from the grid isn't found, also look for circles, squares and the other hex orientation."
+      },
+      "rotationTolerance": {
+        "Name": "Rotation tolerance (degrees)",
+        "Hint": "How far a painted border may be rotated from the grid orientation and still be detected."
+      },
+      "gridlessShape": { "Name": "Expected border on gridless scenes", "Hint": "Border shape to look for first on gridless scenes (tokens with a rectangle shape always look for a square)." },
+      "squareGridShape": { "Name": "Expected border on square grids", "Hint": "Auto: circle for tokens with an ellipse shape, square otherwise." },
+      "shape": {
+        "Choices": { "auto": "Auto", "circle": "Circle", "hex-pointy": "Hex (pointy top)", "hex-flat": "Hex (flat top)", "square": "Square" }
+      },
+      "debugOverlay": {
+        "Name": "Debug overlay",
+        "Hint": "Draw the target box (cyan), the predicted border (magenta) and the rendered border (green) on fitted tokens."
+      },
+      "hudButton": { "Name": "Token HUD button", "Hint": "Add a button to the token HUD: click to fit, right-click to align manually." },
+      "useCache": { "Name": "Cache detections", "Hint": "Remember detection results per image in this browser so the same image is fitted instantly next time." },
+      "maxDetectSize": { "Name": "Detection resolution (px)", "Hint": "Larger images are scaled down to this size on the longest side before detection. Higher is slower but can help with very thin borders." },
+      "notifications": { "Name": "Notify when a fit is applied", "Hint": "Show a notification each time a token is fitted automatically." },
+      "clearCache": { "Name": "Detection cache", "Label": "Clear cache", "Hint": "Forget all cached detection results in this browser." }
+    },
+    "Keybindings": {
+      "fitSelected": "Fit border of selected tokens",
+      "alignSelected": "Align border of the selected token manually"
+    },
+    "Notify": {
+      "cacheCleared": "Token Border Auto-Fit: detection cache cleared.",
+      "noPermission": "You don't have permission to change this token.",
+      "ringSkipped": "{name} uses a dynamic token ring; the border was not fitted (see module settings).",
+      "corsFailed": "Couldn't read the image of {name}: the server doesn't allow it (CORS). You can still align it manually.",
+      "loadFailed": "Couldn't load the image of {name} for border detection.",
+      "applied": "Border fitted for {name} ({conf}% confidence).",
+      "noneSelected": "Select one or more tokens first.",
+      "batch": "Fitted {applied} of {total} tokens. Low confidence or unreadable: {low}. Skipped (dynamic ring): {ring}."
+    },
+    "Prompt": {
+      "ask": "Border found in {name}'s image ({conf}% confidence). Fit it to the grid?",
+      "lowConfidence": "Not sure about the border in {name}'s image ({conf}% confidence). Align it manually?",
+      "apply": "Apply",
+      "applyAnyway": "Apply anyway",
+      "adjust": "Adjust…",
+      "dismiss": "Dismiss"
+    },
+    "Config": {
+      "label": "Border auto-fit",
+      "fit": "Fit border to grid",
+      "align": "Adjust manually",
+      "status": "Fitted automatically ({conf}% confidence).",
+      "statusManual": "Aligned manually.",
+      "statusNone": "Not fitted for this image yet."
+    },
+    "Hud": { "tooltip": "Fit border to grid (right-click: adjust manually)" },
+    "Align": {
+      "Title": "Fit border to grid",
+      "Redetect": "Re-run auto-detect",
+      "Reset": "Reset",
+      "Cancel": "Cancel",
+      "Apply": "Apply",
+      "Shape": "Shape",
+      "Zoom": "Zoom",
+      "ZoomFit": "Fit",
+      "Lock": "Keep proportions",
+      "Regular": "Make regular",
+      "RegularHint": "Restore the regular proportions of the shape, keeping its area",
+      "Help": "Drag to move, drag corners to resize (Shift: free proportions, Alt: from the centre). Arrows nudge 1 px, Shift+arrows 10 px, Ctrl+arrows resize, +/- grow/shrink, Ctrl+wheel zooms.",
+      "Confidence": "Auto-detect confidence",
+      "Shapes": { "hex-pointy": "Hex (pointy top)", "hex-flat": "Hex (flat top)", "circle": "Circle", "square": "Square" }
+    }
+  }
+}

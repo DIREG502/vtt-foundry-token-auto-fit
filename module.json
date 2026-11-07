@@ -1,0 +1,46 @@
+{
+  "id": "token-border-autofit",
+  "title": "Token Border Auto-Fit",
+  "description": "Finds the border painted into token art (hexagon, circle or square — even when it is a gradient, thin, or partly covered by the art) and sets the token's texture scale and anchor so that border sits exactly on the token's grid shape. Hex (pointy and flat), square and gridless scenes; manual alignment window; batch fitting; stand-alone macro.",
+  "version": "0.1.0",
+  "authors": [
+    {
+      "name": "DIREG502"
+    }
+  ],
+  "url": "https://github.com/DIREG502/token-border-autofit",
+  "manifest": "https://github.com/DIREG502/token-border-autofit/releases/latest/download/module.json",
+  "download": "https://github.com/DIREG502/token-border-autofit/releases/download/v0.1.0/module.zip",
+  "license": "LICENSE",
+  "readme": "README.md",
+  "changelog": "CHANGELOG.md",
+  "bugs": "https://github.com/DIREG502/token-border-autofit/issues",
+  "compatibility": {
+    "minimum": "12",
+    "verified": "13"
+  },
+  "esmodules": [
+    "src/foundry/main.js"
+  ],
+  "styles": [
+    "styles/token-border-autofit.css"
+  ],
+  "languages": [
+    {
+      "lang": "en",
+      "name": "English",
+      "path": "lang/en.json"
+    },
+    {
+      "lang": "ru",
+      "name": "Русский",
+      "path": "lang/ru.json"
+    }
+  ],
+  "flags": {
+    "hotReload": {
+      "extensions": ["css", "json"],
+      "paths": ["styles", "lang"]
+    }
+  }
+}

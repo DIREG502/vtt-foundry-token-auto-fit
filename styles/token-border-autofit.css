@@ -1,0 +1,51 @@
+/* Token Border Auto-Fit */
+
+.tbaf-config .form-fields { gap: 6px; }
+.tbaf-config .form-fields button { flex: 1; white-space: nowrap; }
+
+.tbaf-align-window .window-content { padding: 8px; overflow: hidden; }
+.tbaf-align { display: flex; flex-direction: column; gap: 6px; height: 100%; }
+.tbaf-align .tbaf-info { margin: 0; font-size: 0.85em; opacity: 0.85; }
+.tbaf-editor-host { flex: 1; min-height: 0; display: flex; }
+.tbaf-editor { display: flex; flex-direction: column; gap: 6px; flex: 1; min-height: 0; }
+.tbaf-editor-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 0.9em; }
+.tbaf-editor-bar label { display: flex; align-items: center; gap: 4px; }
+.tbaf-editor-bar select { height: 26px; }
+.tbaf-editor-bar .tbaf-mini { flex: 0 0 auto; width: auto; height: 26px; line-height: 1; padding: 0 8px; }
+.tbaf-readout { margin-left: auto; font-family: monospace; font-size: 0.85em; opacity: 0.8; }
+.tbaf-view {
+  flex: 1; min-height: 240px; overflow: auto; position: relative; outline: none;
+  border: 1px solid rgba(128, 128, 128, 0.5); border-radius: 4px;
+  background-color: #808080;
+  background-image: linear-gradient(45deg, #9a9a9a 25%, transparent 25%, transparent 75%, #9a9a9a 75%),
+    linear-gradient(45deg, #9a9a9a 25%, transparent 25%, transparent 75%, #9a9a9a 75%);
+  background-size: 16px 16px; background-position: 0 0, 8px 8px;
+}
+.tbaf-view:focus-visible { box-shadow: 0 0 0 2px var(--color-border-highlight, #ff6400); }
+.tbaf-stage { position: relative; margin: auto; }
+.tbaf-stage img { display: block; max-width: none; border: none; user-select: none; pointer-events: none; }
+.tbaf-overlay { position: absolute; inset: 0; overflow: visible; cursor: move; }
+.tbaf-outline { fill: rgba(0, 255, 100, 0.06); stroke: #00ff64; }
+.tbaf-inner { fill: none; stroke: #00c8ff; stroke-dasharray: 6 4; }
+.tbaf-bbox { fill: none; stroke: rgba(255, 255, 255, 0.55); stroke-dasharray: 4 4; }
+.tbaf-cross { stroke: #00ff64; }
+.tbaf-handle { fill: #fff; stroke: #000; }
+.tbaf-handle.tbaf-corner { cursor: nwse-resize; }
+.tbaf-handle[data-h="ne"], .tbaf-handle[data-h="sw"] { cursor: nesw-resize; }
+.tbaf-handle[data-h="n"], .tbaf-handle[data-h="s"] { cursor: ns-resize; }
+.tbaf-handle[data-h="e"], .tbaf-handle[data-h="w"] { cursor: ew-resize; }
+.tbaf-buttons { display: flex; gap: 6px; }
+.tbaf-buttons button { flex: 1; }
+.tbaf-primary { font-weight: bold; }
+
+.tbaf-prompts {
+  position: fixed; right: 320px; bottom: 16px; z-index: 1000;
+  display: flex; flex-direction: column; gap: 8px; max-width: 380px;
+}
+.tbaf-prompt {
+  background: rgba(20, 20, 24, 0.95); color: #eee; border: 1px solid #555; border-radius: 6px;
+  padding: 8px 10px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.6); font-size: 13px;
+}
+.tbaf-prompt p { margin: 0 0 6px; }
+.tbaf-prompt-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+.tbaf-prompt-buttons button { flex: 1 1 auto; width: auto; line-height: 24px; padding: 0 8px; }
