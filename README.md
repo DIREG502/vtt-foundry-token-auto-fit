@@ -108,13 +108,18 @@ the console if they disagree.
 ### Detection ([`src/detector/`](src/detector/), pure JS, browser and Node)
 
 1. **Features**: downscale to 512 px (area average) on alpha-**premultiplied** colour, so
-   garbage colour under transparent pixels never creates edges. Edges come from a multi-channel
+   garbage colour under transparent pixels never creates edges. Token art is often cropped
+   exactly to its frame, so the outer edge lies *on* the canvas boundary where no gradient can
+   be measured; a cut-out image (transparent corners) whose pixels reach the boundary first gets
+   a few transparent pixels of margin, as it has on the Foundry canvas. Edges come from a multi-channel
    structure tensor over luminance, two opponent-chroma channels (catches borders that only
    differ in hue) and alpha.
 2. **Candidates**: a hexagon of known orientation is three pairs of parallel lines. Projecting
    edge pixels whose normal matches each side direction onto that normal gives 1-D histograms
    where each side is a peak, however much of it is hidden. Peak pairs fix scale and one centre
-   coordinate, and a 1-D search finds the rest. Circles use gradient Hough voting plus a radial
+   coordinate, and a 1-D search finds the rest. Aspects are searched in 2 % steps near regular:
+   real frames are often a few percent off (a pointy hex drawn into a 433×512 canvas has aspect
+   0.845, not 0.866). Circles use gradient Hough voting plus a radial
    histogram.
 3. **Robust score**: N points along the outline, edge energy along the normal, and the
    **fraction** of points that look like an edge (not the mean, so 30–40 % occlusion only costs
@@ -123,11 +128,15 @@ the console if they disagree.
    silhouette only one.
 4. **Refinement** at full resolution: short profiles across the outline, robust (Tukey)
    Gauss-Newton on the signed distance, shrinking search radius. Each candidate is fitted
-   twice, as a *regular* shape and with aspect/rotation free. The free fit must win clearly,
-   because when art hides one or two sides it can drift to a slightly stretched hex that scores
-   the same.
-5. **Outer edge and thickness**: a scan of parallel edges inside and outside the fit. The
-   thickness is the inner offset that forms a band with the outer edge on the most points.
+   *upright* (free aspect, no rotation) and, unless that is already excellent, with rotation
+   free too; the looser fit must win clearly, because when art hides sides it can drift to a
+   tilted outline that scores the same. Aspect deviations up to 3.5 % from regular cost
+   nothing in the score; beyond that a stretched fit must earn it.
+5. **Outer edge and thickness**: thick frames (outline – fill – outline) have several parallel
+   edges a few pixels apart, and sides can settle on different ones. Every side is snapped to
+   the outermost edge that most of its points agree on (art rarely runs parallel to a side for
+   long), then the shape is re-fitted. A scan of parallel edges inside and outside the fit gives
+   the thickness: the inner offset that forms a band with the outer edge on the most points.
 6. **Confidence** 0–1 from coverage, inliers, band cue, colour consistency, side balance and the
    margin over the best competing (non-concentric) candidate. If the expected shape scores below
    0.8, the other shapes are scored too (fully refined only if their coarse evidence rivals the
@@ -140,14 +149,18 @@ search with the same scoring and refinement:
 
 | Method | Within 1.5 % | Mean time | Worst |
 |---|---|---|---|
-| Projection histograms (default) | 12 / 12 | ~130 ms | ~190 ms |
-| Brute-force grid (`method: "grid"`) | 7 / 12 | ~7.8 s | ~24 s |
+| Projection histograms (default) | 22 / 22 | ~115 ms | ~185 ms |
+| Brute-force grid (`method: "grid"`) | 18 / 22 | ~6.6 s | ~8.3 s |
 
-In Chrome (`dev/harness.html`) the slowest image takes 280 ms (its confidence is 0.75, so the
-other shapes are tried too) and the 2048×2048 sample takes 197 ms. Accuracy on the test set:
-centre and size errors 0.0–0.1 % of the border width. With a deliberately wrong shape hint
-(`npm run test:detect -- --blind`, everything hinted as a pointy hex) all 12 are still found
-through the fallback, at up to ~550 ms.
+(22 images: 10 real tokens with hand-measured ground truth, 12 synthetic; Node, median of 5
+runs; the grid method shares the new refinement, which is why it improved from 7 / 12.)
+
+In Chrome (`dev/harness.html?raw=1`) the slowest image takes 230 ms and the 2048×2048 sample
+186 ms. Accuracy: centre and size errors 0.0–0.5 % of the border width on the real tokens
+(0.0–0.1 % on the synthetic ones); the large real images give the same answer when downscaled
+to 2048, 1024 or 512 px (worst 0.65 %). With a deliberately wrong shape hint
+(`npm run test:detect -- --blind`, everything hinted as a pointy hex) all 22 are still found
+through the fallback, at up to ~500 ms.
 
 ### Systems
 
@@ -187,7 +200,9 @@ Everything here can be switched off or is invisible by default:
 
 | Extra | Why | Toggle |
 |---|---|---|
-| Two-hypothesis refinement (regular vs free) | Fixes drift to stretched hexes when art hides whole sides | always on (detector) |
+| Upright-then-free refinement, aspect dead zone | Real frames are often 2–3 % off regular; a looser fit must win clearly so art can't tilt it | detector options `hypotheses`, `aspectFree` |
+| Transparent margin for art cropped to its frame | The outer edge on the canvas boundary has no measurable gradient otherwise | detector option `padClipped` |
+| Per-side snap to the outer edge | Thick outline–fill–outline frames: each side finds the outermost edge on its own | detector option `snapOuter` |
 | Band ("thin line") cue and thickness | Separates borders from art silhouettes; enables centre/inner reference lines | always on |
 | *Border line to align* (outer / centre / inner) | Artists draw frames differently; the outer edge is the usual intent | setting |
 | *Proportions*: Keep / Auto | Size 2/3 hex tokens have a bounding box that isn't hex-shaped; stretching a regular hex into it distorts the art | setting (default *Stretch*, as specified) |
@@ -204,7 +219,7 @@ Everything here can be switched off or is invisible by default:
 npm install
 npm run gen:samples   # regenerate synthetic samples + ground truth in test-images/
 npm run test:detect   # detect on every image in test-images/ → test-output/*.png + contact sheet
-npm run test:unit     # apply maths + Foundry-mock integration tests
+npm run test:unit     # apply maths, detector regressions, Foundry-mock integration tests
 npm run bench         # projection vs grid method, per-stage timings
 npm run build:macro   # dist/token-border-autofit-macro.js
 npm run verify        # all of the above checks (package, tests, detection, macro build)
@@ -212,11 +227,14 @@ npm run harness       # serve dev/harness.html (?raw=1) to time the detector in 
 ```
 
 **Test images**: `test-images/expected.json` holds the ground truth per file:
-`{ shape, cx, cy, width, height, rotation, thickness }` for the **outer** edge, in source-image
-pixels. The synthetic samples are generated with exact values. To add real token art, drop the
-file into `test-images/`, run `npm run test:detect`, and copy the detected values from
-`test-output/results.json` into `expected.json`, correcting them as needed. Files without an
-entry are still detected and drawn, just not scored.
+`{ shape, cx, cy, width, height, rotation, thickness }` for the **outer** edge (where alpha
+crosses 50 %; soft drop shadows don't count), in source-image pixels. The synthetic samples are
+generated with exact values. The real token art was measured by hand, independently of the
+detector: `node tools/measure-hex.mjs <file> --box=cx,cy,w,h --alpha=128` scans inward from
+outside the image along columns and rows, prints the pixel runs (so art crossing the border
+can be spotted and skipped) and fits the hex; `node tools/inspect-fit.mjs <file> --gt` shows
+zoomed crops along the outline to check it. Files without an entry are still detected and
+drawn, just not scored.
 
 Layout: `src/detector/` (pure core, no Foundry), `src/core/fit-math.js` (pure apply maths),
 `src/ui/` (plain-DOM alignment editor and prompt), `src/foundry/` (hooks, settings, UI

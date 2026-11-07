@@ -7,9 +7,15 @@ First version.
 ### Added
 - Border detector (pure JS, browser + Node): hexagons (pointy/flat), circles, squares; gradient,
   thin, isoluminant and partly occluded borders; outer edge, thickness and confidence.
-  12/12 synthetic samples within 1.5 % of the border width (typically ~0.1 %);
-  ~130 ms mean / 190 ms worst in Node, 280 ms worst in Chrome for images up to 2048 px.
-  Shape fallback finds all 12 even with a wrong shape hint.
+  22/22 test images within 1.5 % of the border width (10 real token images, hand-measured,
+  worst 0.49 %; 12 synthetic, ~0.1 %); ~115 ms mean / ~185 ms worst in Node, 230 ms worst in
+  Chrome for images up to 2.6k px. Shape fallback finds all 22 even with a wrong shape hint.
+- Detector changes from testing on real token art (detector version 2, so cached detections
+  are redone): transparent margin for art cropped exactly to its frame; aspect searched in 2 %
+  steps and up to 3.5 % off regular without penalty (frames drawn at 0.845 instead of 0.866);
+  per-side snap to the outermost edge for thick outline–fill–outline frames; refinement order
+  upright → free. Before these, 3 of the 10 real images were within tolerance, two of the
+  failures at 98–99 % confidence.
 - Apply maths for `texture.scaleX/Y` + `anchorX/Y` for every `fit` mode, keeping mirroring,
   handling rotation and off-centre pivots; uses Foundry's API for the token shape and the live
   mesh for the base scale.
