@@ -3,3 +3,8 @@ test-output/
 dist/*.map
 *.log
 .DS_Store
+
+# Real token art stays local (not ours to publish); only synthetic samples + ground truth are tracked
+test-images/*
+!test-images/synthetic-*
+!test-images/expected.json
