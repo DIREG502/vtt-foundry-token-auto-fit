@@ -129,19 +129,25 @@ the console if they disagree.
 5. **Outer edge and thickness**: a scan of parallel edges inside and outside the fit. The
    thickness is the inner offset that forms a band with the outer edge on the most points.
 6. **Confidence** 0–1 from coverage, inliers, band cue, colour consistency, side balance and the
-   margin over the best competing (non-concentric) candidate. If the expected shape scores low,
-   the other shapes are tried. Another shape has to beat it by a margin.
+   margin over the best competing (non-concentric) candidate. If the expected shape scores below
+   0.8, the other shapes are scored too (fully refined only if their coarse evidence rivals the
+   expected one). Another shape has to beat the expected one by a margin, and a result lying
+   inside a clearly larger plausible one (a round shield inside a hex frame) loses to it: the
+   border encloses the art.
 
 **Benchmark** (`npm run bench`): the projection-histogram method against a brute-force grid
 search with the same scoring and refinement:
 
 | Method | Within 1.5 % | Mean time | Worst |
 |---|---|---|---|
-| Projection histograms (default) | 12 / 12 | ~130 ms | ~175 ms |
+| Projection histograms (default) | 12 / 12 | ~130 ms | ~190 ms |
 | Brute-force grid (`method: "grid"`) | 7 / 12 | ~7.8 s | ~24 s |
 
-In Chrome (`dev/harness.html`) the slowest image takes 214 ms; the 2048×2048 sample takes 209 ms.
-Accuracy on the test set: centre and size errors 0.0–0.1 % of the border width.
+In Chrome (`dev/harness.html`) the slowest image takes 280 ms (its confidence is 0.75, so the
+other shapes are tried too) and the 2048×2048 sample takes 197 ms. Accuracy on the test set:
+centre and size errors 0.0–0.1 % of the border width. With a deliberately wrong shape hint
+(`npm run test:detect -- --blind`, everything hinted as a pointy hex) all 12 are still found
+through the fallback, at up to ~550 ms.
 
 ### Systems
 

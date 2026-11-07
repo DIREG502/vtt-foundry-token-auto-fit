@@ -19,7 +19,7 @@ export const DETECTOR_VERSION = 1;
 export const DEFAULTS = Object.freeze({
   shape: "hex-pointy",
   fallback: true,          // try the other shapes when the expected one is weak
-  fallbackBelow: 0.55,     // confidence under which other shapes are tried
+  fallbackBelow: 0.8,      // confidence under which other shapes are also tried
   method: "hough",         // "hough" | "grid" (brute-force baseline, slower)
   coarseSize: 512,
   rotationTolerance: 3,    // degrees
@@ -33,6 +33,7 @@ export const DEFAULTS = Object.freeze({
   maxCandidates: 60,
   refineTop: 4,
   scanThickness: true,
+  timeBudget: 800,         // ms; safety cap: remaining fallback shapes are skipped after this
   aspectPrior: 2.5,        // score penalty per unit of aspect deviation from the regular shape
 });
 
@@ -78,7 +79,7 @@ function concentric(a, b, tight = false) {
     Math.abs(Math.max(b.w, b.h) / size - 1) < 0.2;
 }
 
-function detectShape(img, level, edges, shape, opts, timings) {
+function detectShape(img, level, edges, shape, opts, timings, { minCoarse = 0 } = {}) {
   const t0 = now();
   let cands;
   if (opts.method === "grid") cands = gridCandidates(img, shape, opts).map((c) => toLevel(level, c));
@@ -88,6 +89,11 @@ function detectShape(img, level, edges, shape, opts, timings) {
   const scored = cands.map((c) => ({ c, sc: scorePerimeter(level, c) }));
   scored.sort((a, b) => b.sc.score - a.sc.score);
   const t2 = now();
+  const coarseTop = scored[0]?.sc.score ?? 0;
+  if (coarseTop < minCoarse) {
+    timings.candidates += t1 - t0; timings.scoring += t2 - t1;
+    return { skipped: true, coarseTop };
+  }
 
   // Refine the best few *distinct* borders.
   const picked = [];
@@ -141,7 +147,7 @@ function detectShape(img, level, edges, shape, opts, timings) {
   const base = smoothstep(0.2, 0.62, evidence(best));
   const confidence = base * (0.65 + 0.35 * best.level.consistency) * (0.75 + 0.25 * best.level.sideBalance) *
     (1 - 0.5 * smoothstep(0.7, 1.0, ratio));
-  return { ...best, confidence, candidates: cands.length, rival: rival ? { ...rival.shape, score: rival.score } : null };
+  return { ...best, confidence, coarseTop, candidates: cands.length, rival: rival ? { ...rival.shape, score: rival.score } : null };
 }
 
 /** Edge evidence 0..1: coverage (coarse), inliers (full res) and, when a band exists, the thin-line cue. */
@@ -212,15 +218,34 @@ export function detectBorder(img, options = {}) {
 
   const order = [opts.shape, ...(opts.fallback ? fallbackOrder(opts.shape) : [])];
   const tried = [];
+  const results = [];
   let best = null;
   for (const shape of order) {
-    if (shape !== opts.shape && best && best.confidence >= opts.fallbackBelow) break;
-    const r = detectShape(img, level, edges, shape, opts, timings);
-    if (!r) continue;
+    const fallback = shape !== opts.shape;
+    // Stop once the EXPECTED shape is convincing. If a fallback shape is leading, keep looking:
+    // the remaining shapes may hold a larger border that encloses it (see below).
+    if (fallback && best && best.confidence >= opts.fallbackBelow && best.shape.shape === opts.shape) break;
+    if (fallback && now() - t0 > opts.timeBudget) break; // safety cap
+    // A fallback shape is only refined when its coarse evidence rivals the expected shape's.
+    const hinted = results.find((r) => r.shape.shape === opts.shape);
+    const minCoarse = fallback && hinted ? 0.85 * hinted.coarseTop : 0;
+    const r = detectShape(img, level, edges, shape, opts, timings, { minCoarse });
+    if (!r || r.skipped) { if (r) tried.push({ shape, skipped: true, coarse: r.coarseTop }); continue; }
     tried.push({ shape, confidence: r.confidence });
     // Another shape must clearly beat the expected one.
-    const adj = shape === opts.shape ? r.confidence : r.confidence - 0.08;
-    if (!best || adj > best.adj) best = { ...r, adj };
+    const adj = fallback ? r.confidence - 0.08 : r.confidence;
+    results.push({ ...r, adj });
+    if (!best || adj > best.adj) best = results.at(-1);
+  }
+  // A painted border encloses the art: if the winner lies inside a clearly larger result that
+  // is still plausible (e.g. a round shield inside a hex frame), the larger one is the border.
+  if (best) {
+    const area = (r) => r.shape.w * r.shape.h;
+    const inside = (a, b) => Math.abs(a.shape.cx - b.shape.cx) + a.shape.w / 2 <= b.shape.w / 2 * 1.02 &&
+      Math.abs(a.shape.cy - b.shape.cy) + a.shape.h / 2 <= b.shape.h / 2 * 1.02;
+    const encl = results.filter((r) => r !== best && r.confidence >= 0.6 && area(r) > 2 * area(best) && inside(best, r))
+      .sort((a, b) => b.adj - a.adj)[0];
+    if (encl) best = encl;
   }
   timings.total = now() - t0;
   if (!best) {

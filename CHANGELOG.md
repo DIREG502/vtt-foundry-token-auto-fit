@@ -8,7 +8,8 @@ First version.
 - Border detector (pure JS, browser + Node): hexagons (pointy/flat), circles, squares; gradient,
   thin, isoluminant and partly occluded borders; outer edge, thickness and confidence.
   12/12 synthetic samples within 1.5 % of the border width (typically ~0.1 %);
-  ~130 ms mean / 175 ms worst in Node, 214 ms worst in Chrome for images up to 2048 px.
+  ~130 ms mean / 190 ms worst in Node, 280 ms worst in Chrome for images up to 2048 px.
+  Shape fallback finds all 12 even with a wrong shape hint.
 - Apply maths for `texture.scaleX/Y` + `anchorX/Y` for every `fit` mode, keeping mirroring,
   handling rotation and off-centre pivots; uses Foundry's API for the token shape and the live
   mesh for the base scale.

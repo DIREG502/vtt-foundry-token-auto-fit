@@ -917,8 +917,8 @@
     shape: "hex-pointy",
     fallback: true,
     // try the other shapes when the expected one is weak
-    fallbackBelow: 0.55,
-    // confidence under which other shapes are tried
+    fallbackBelow: 0.8,
+    // confidence under which other shapes are also tried
     method: "hough",
     // "hough" | "grid" (brute-force baseline, slower)
     coarseSize: 512,
@@ -939,6 +939,8 @@
     maxCandidates: 60,
     refineTop: 4,
     scanThickness: true,
+    timeBudget: 800,
+    // ms; safety cap: remaining fallback shapes are skipped after this
     aspectPrior: 2.5
     // score penalty per unit of aspect deviation from the regular shape
   });
@@ -976,7 +978,7 @@
     const sameAspect = Math.abs(a.w / a.h / (b.w / b.h) - 1) < 0.02;
     return Math.hypot(a.cx - b.cx, a.cy - b.cy) < (tight ? 0.012 : 0.03) * size && sameAspect && Math.abs(Math.max(b.w, b.h) / size - 1) < 0.2;
   }
-  function detectShape(img, level, edges, shape, opts, timings) {
+  function detectShape(img, level, edges, shape, opts, timings, { minCoarse = 0 } = {}) {
     const t0 = now();
     let cands;
     if (opts.method === "grid") cands = gridCandidates(img, shape, opts).map((c) => toLevel(level, c));
@@ -986,6 +988,12 @@
     const scored = cands.map((c) => ({ c, sc: scorePerimeter(level, c) }));
     scored.sort((a, b) => b.sc.score - a.sc.score);
     const t2 = now();
+    const coarseTop = scored[0]?.sc.score ?? 0;
+    if (coarseTop < minCoarse) {
+      timings.candidates += t1 - t0;
+      timings.scoring += t2 - t1;
+      return { skipped: true, coarseTop };
+    }
     const picked = [];
     for (const s of scored) {
       if (picked.some((p) => concentric(p.c, s.c, true))) continue;
@@ -1044,7 +1052,7 @@
     const ratio = rival ? rival.score / Math.max(1e-6, best.score) : 0;
     const base = smoothstep(0.2, 0.62, evidence(best));
     const confidence = base * (0.65 + 0.35 * best.level.consistency) * (0.75 + 0.25 * best.level.sideBalance) * (1 - 0.5 * smoothstep(0.7, 1, ratio));
-    return { ...best, confidence, candidates: cands.length, rival: rival ? { ...rival.shape, score: rival.score } : null };
+    return { ...best, confidence, coarseTop, candidates: cands.length, rival: rival ? { ...rival.shape, score: rival.score } : null };
   }
   function evidence(r) {
     const e = Math.min(r.level.coverage, r.inlier + 0.1);
@@ -1103,14 +1111,29 @@
     timings.prep = now() - t0;
     const order = [opts.shape, ...opts.fallback ? fallbackOrder(opts.shape) : []];
     const tried = [];
+    const results = [];
     let best = null;
     for (const shape of order) {
-      if (shape !== opts.shape && best && best.confidence >= opts.fallbackBelow) break;
-      const r = detectShape(img, level, edges, shape, opts, timings);
-      if (!r) continue;
+      const fallback = shape !== opts.shape;
+      if (fallback && best && best.confidence >= opts.fallbackBelow && best.shape.shape === opts.shape) break;
+      if (fallback && now() - t0 > opts.timeBudget) break;
+      const hinted = results.find((r2) => r2.shape.shape === opts.shape);
+      const minCoarse = fallback && hinted ? 0.85 * hinted.coarseTop : 0;
+      const r = detectShape(img, level, edges, shape, opts, timings, { minCoarse });
+      if (!r || r.skipped) {
+        if (r) tried.push({ shape, skipped: true, coarse: r.coarseTop });
+        continue;
+      }
       tried.push({ shape, confidence: r.confidence });
-      const adj = shape === opts.shape ? r.confidence : r.confidence - 0.08;
-      if (!best || adj > best.adj) best = { ...r, adj };
+      const adj = fallback ? r.confidence - 0.08 : r.confidence;
+      results.push({ ...r, adj });
+      if (!best || adj > best.adj) best = results.at(-1);
+    }
+    if (best) {
+      const area = (r) => r.shape.w * r.shape.h;
+      const inside = (a, b) => Math.abs(a.shape.cx - b.shape.cx) + a.shape.w / 2 <= b.shape.w / 2 * 1.02 && Math.abs(a.shape.cy - b.shape.cy) + a.shape.h / 2 <= b.shape.h / 2 * 1.02;
+      const encl = results.filter((r) => r !== best && r.confidence >= 0.6 && area(r) > 2 * area(best) && inside(best, r)).sort((a, b) => b.adj - a.adj)[0];
+      if (encl) best = encl;
     }
     timings.total = now() - t0;
     if (!best) {
