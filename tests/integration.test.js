@@ -47,7 +47,9 @@ test("preCreateToken applies a cached detection synchronously", async () => {
 test("token created from a fitted prototype is re-fitted for a different grid", async () => {
   clearCache();
   const hexScene = makeScene({ type: "hex-pointy" });
-  const proto = await MockTokenDocument.create({ texture: { src: SRC } }, { parent: hexScene }); // no cache -> marked
+  game.settings.set("token-border-autofit", "mode", "off"); // no pixel loader in Node
+  const proto = await MockTokenDocument.create({ texture: { src: SRC } }, { parent: hexScene });
+  game.settings.set("token-border-autofit", "mode", "auto");
   // Simulate an existing fit flag carried over from the prototype, but computed for another grid.
   const flag = { ...DET, w: DET.w, h: DET.h };
   const sq = makeScene({ type: "square" });

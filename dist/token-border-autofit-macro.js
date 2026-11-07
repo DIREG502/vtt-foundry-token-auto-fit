@@ -2134,7 +2134,7 @@
       onApply: o.onApply,
       title: `${i18n("Title", "Fit border to grid")}${name ? `: ${name}` : ""}`
     });
-    app.render(true);
+    app.render({ force: true });
     return app;
   }
 

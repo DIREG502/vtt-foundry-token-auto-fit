@@ -1,0 +1,53 @@
+name: Release
+
+# On a published release: verify, stamp the tag's version and download URL into module.json,
+# build module.zip, and attach module.json + module.zip to the release.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Verify (package checks, unit tests, detection on test images, macro build)
+        run: |
+          npm ci
+          npm run verify
+
+      - name: Derive version from tag
+        id: version
+        run: |
+          VERSION="${TAG#v}"
+          if [ -z "$VERSION" ]; then echo "::error::Could not derive a version from tag '$TAG'"; exit 1; fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Write version and download URL into module.json
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          DOWNLOAD: https://github.com/${{ github.repository }}/releases/download/${{ github.event.release.tag_name }}/module.zip
+        run: |
+          jq --arg v "$VERSION" --arg d "$DOWNLOAD" '.version = $v | .download = $d' module.json > module.json.tmp
+          mv module.json.tmp module.json
+          cat module.json
+
+      - name: Build module.zip (runtime files only)
+        run: |
+          zip -r module.zip module.json README.md LICENSE CHANGELOG.md src styles lang dist/token-border-autofit-macro.js
+          unzip -l module.zip
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" module.json module.zip dist/token-border-autofit-macro.js --clobber
