@@ -45,10 +45,12 @@ function orientationCombos(opts) {
   // full-resolution refinement finds the exact rotation/aspect.
   const tol = Math.max(0, opts.rotationTolerance);
   rots.push(0);
-  if (tol >= 1.5) { const r = Math.min(tol, 2.5); rots.push(-r, r); }
+  if (tol >= 1.5 && opts.coarseRotations !== false) { const r = Math.min(tol, 2.5); rots.push(-r, r); }
   const aspects = [1];
   const at = Math.max(0, opts.aspectTolerance);
-  for (let a = 0.04; a <= at + 1e-9; a += 0.04) aspects.push(1 - a, 1 + a);
+  // 2 % steps near regular, where real frames cluster (e.g. 0.845 vs 0.866 for a pointy hex:
+  // -2.4 %), so the refinement starts within its capture range; 4 % steps further out.
+  for (let a = 0.02; a <= at + 1e-9; a += a < 0.06 - 1e-9 ? 0.02 : 0.04) aspects.push(1 - a, 1 + a);
   const out = [];
   for (const r of rots) for (const a of aspects) out.push({ rot: r * DEG, aspect: a });
   return out;

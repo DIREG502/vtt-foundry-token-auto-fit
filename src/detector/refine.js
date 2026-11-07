@@ -188,6 +188,61 @@ export function refine(img, s, { px = 1, rotLimit = Infinity, startRadius, final
 }
 
 /**
+ * Per-side snap to the OUTER edge of the border.
+ *
+ * A thick frame (outline - fill - outline) has several parallel edges a few px apart. After the
+ * first refinement some sides may sit on an inner one while others are right; a single global
+ * offset cannot fix that. For every side this looks outward up to `outward` px and picks the
+ * outermost offset at which a large share of that side's points agree on an edge (art edges
+ * rarely run parallel to a side for long). Returns observations on those edges for fitShape,
+ * plus the per-side offsets. Sides without a consensus (hidden by art) contribute nothing.
+ */
+export function snapOuterPerSide(img, s, { outward = 12, inward = 2, nPts = 192, minCov = 0.3, relCov = 0.6, relPeak = 0.35 } = {}) {
+  const pts = perimeterPoints(s, nPts, 0.1);
+  const step = Math.max(0.5, Math.min(1, outward / 60));
+  const tol = Math.max(1.25, 2 * step);
+  const sides = new Map();
+  for (const p of pts) {
+    const { ts, D } = profile(img, p, -inward, outward, step);
+    let dmax = 0;
+    for (let i = 0; i < D.length; i++) dmax = Math.max(dmax, D[i]);
+    const peaks = [];
+    if (dmax > 0) {
+      for (let i = 1; i < D.length - 1; i++) {
+        if (D[i] < relPeak * dmax || D[i] < D[i - 1] || D[i] < D[i + 1]) continue;
+        const y0 = D[i - 1], y1 = D[i], y2 = D[i + 1], den = y0 - 2 * y1 + y2;
+        const off = Math.abs(den) > 1e-9 ? Math.max(-0.5, Math.min(0.5, (0.5 * (y0 - y2)) / den)) : 0;
+        peaks.push(ts[i] + off * step);
+      }
+    }
+    if (!sides.has(p.side)) sides.set(p.side, []);
+    sides.get(p.side).push({ p, peaks });
+  }
+  const obs = [], offsets = [];
+  for (const [side, list] of sides) {
+    // Coverage of each candidate offset: share of the side's points with a peak within tol.
+    const cand = [...new Set(list.flatMap((q) => q.peaks.map((t) => Math.round(t / step) * step)))];
+    const cov = (t) => list.reduce((n, q) => n + (q.peaks.some((u) => Math.abs(u - t) <= tol) ? 1 : 0), 0) / list.length;
+    const scored = cand.map((t) => ({ t, c: cov(t) }));
+    const best = scored.reduce((b, x) => (x.c > b ? x.c : b), 0);
+    const ok = scored.filter((x) => x.c >= Math.max(minCov, relCov * best));
+    if (!ok.length) { offsets.push({ side, t: null, c: best }); continue; }
+    // Outermost consensus edge; refine it as the mean of the agreeing peaks.
+    const t0 = ok.reduce((b, x) => (x.t > b.t ? x : b)).t;
+    let sum = 0, n = 0;
+    for (const q of list) {
+      let bt = null;
+      for (const u of q.peaks) if (Math.abs(u - t0) <= tol && (bt === null || Math.abs(u - t0) < Math.abs(bt - t0))) bt = u;
+      if (bt === null) continue;
+      obs.push({ x: q.p.x + q.p.nx * bt, y: q.p.y + q.p.ny * bt, t: bt, w: 1, p: q.p });
+      sum += bt; n++;
+    }
+    offsets.push({ side, t: n ? sum / n : t0, c: cov(t0) });
+  }
+  return { obs, offsets, n: pts.length };
+}
+
+/**
  * Coverage of parallel edges at signed offsets t (outward positive) from the outline.
  * Returns { ts, cov } where cov[i] is the fraction of outline points with an edge peak at ts[i].
  */

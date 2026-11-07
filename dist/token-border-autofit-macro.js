@@ -339,13 +339,13 @@
     const rots = [];
     const tol = Math.max(0, opts.rotationTolerance);
     rots.push(0);
-    if (tol >= 1.5) {
+    if (tol >= 1.5 && opts.coarseRotations !== false) {
       const r = Math.min(tol, 2.5);
       rots.push(-r, r);
     }
     const aspects = [1];
     const at = Math.max(0, opts.aspectTolerance);
-    for (let a = 0.04; a <= at + 1e-9; a += 0.04) aspects.push(1 - a, 1 + a);
+    for (let a = 0.02; a <= at + 1e-9; a += a < 0.06 - 1e-9 ? 0.02 : 0.04) aspects.push(1 - a, 1 + a);
     const out = [];
     for (const r of rots) for (const a of aspects) out.push({ rot: r * DEG, aspect: a });
     return out;
@@ -847,6 +847,52 @@
     }
     return { shape: cur, fit, observation: last };
   }
+  function snapOuterPerSide(img, s, { outward = 12, inward = 2, nPts = 192, minCov = 0.3, relCov = 0.6, relPeak = 0.35 } = {}) {
+    const pts = perimeterPoints(s, nPts, 0.1);
+    const step = Math.max(0.5, Math.min(1, outward / 60));
+    const tol = Math.max(1.25, 2 * step);
+    const sides = /* @__PURE__ */ new Map();
+    for (const p of pts) {
+      const { ts, D } = profile(img, p, -inward, outward, step);
+      let dmax = 0;
+      for (let i = 0; i < D.length; i++) dmax = Math.max(dmax, D[i]);
+      const peaks = [];
+      if (dmax > 0) {
+        for (let i = 1; i < D.length - 1; i++) {
+          if (D[i] < relPeak * dmax || D[i] < D[i - 1] || D[i] < D[i + 1]) continue;
+          const y0 = D[i - 1], y1 = D[i], y2 = D[i + 1], den = y0 - 2 * y1 + y2;
+          const off = Math.abs(den) > 1e-9 ? Math.max(-0.5, Math.min(0.5, 0.5 * (y0 - y2) / den)) : 0;
+          peaks.push(ts[i] + off * step);
+        }
+      }
+      if (!sides.has(p.side)) sides.set(p.side, []);
+      sides.get(p.side).push({ p, peaks });
+    }
+    const obs = [], offsets = [];
+    for (const [side, list] of sides) {
+      const cand = [...new Set(list.flatMap((q) => q.peaks.map((t) => Math.round(t / step) * step)))];
+      const cov = (t) => list.reduce((n2, q) => n2 + (q.peaks.some((u) => Math.abs(u - t) <= tol) ? 1 : 0), 0) / list.length;
+      const scored = cand.map((t) => ({ t, c: cov(t) }));
+      const best = scored.reduce((b, x) => x.c > b ? x.c : b, 0);
+      const ok = scored.filter((x) => x.c >= Math.max(minCov, relCov * best));
+      if (!ok.length) {
+        offsets.push({ side, t: null, c: best });
+        continue;
+      }
+      const t0 = ok.reduce((b, x) => x.t > b.t ? x : b).t;
+      let sum = 0, n = 0;
+      for (const q of list) {
+        let bt = null;
+        for (const u of q.peaks) if (Math.abs(u - t0) <= tol && (bt === null || Math.abs(u - t0) < Math.abs(bt - t0))) bt = u;
+        if (bt === null) continue;
+        obs.push({ x: q.p.x + q.p.nx * bt, y: q.p.y + q.p.ny * bt, t: bt, w: 1, p: q.p });
+        sum += bt;
+        n++;
+      }
+      offsets.push({ side, t: n ? sum / n : t0, c: cov(t0) });
+    }
+    return { obs, offsets, n: pts.length };
+  }
   function edgeScan(img, s, { inner = 0.16, outer = 0.08, thrAbs = 0 } = {}) {
     const a = meanApothem(s);
     const tMin = -inner * a, tMax = outer * a;
@@ -912,7 +958,7 @@
   }
 
   // src/detector/index.js
-  var DETECTOR_VERSION = 1;
+  var DETECTOR_VERSION = 2;
   var DEFAULTS = Object.freeze({
     shape: "hex-pointy",
     fallback: true,
@@ -941,8 +987,21 @@
     scanThickness: true,
     timeBudget: 800,
     // ms; safety cap: remaining fallback shapes are skipped after this
-    aspectPrior: 2.5
-    // score penalty per unit of aspect deviation from the regular shape
+    aspectPrior: 2.5,
+    // score penalty per unit of aspect deviation beyond aspectFree
+    aspectFree: 0.035,
+    // aspect deviation (fraction) that costs nothing: real frames are often 2-3 % off regular
+    hypotheses: "upright,free",
+    // refinement hypotheses per polygon candidate (see detectShape);
+    // add "regular" for a regular-aspect fit when evidence is weak. Circles
+    // always try circle (regular) and ellipse (free).
+    coarseRotations: false,
+    // also search +-2.5 deg rotations at the coarse stage (the histogram's
+    // angular tolerance and the "free" refinement already cover them)
+    snapOuter: true,
+    // per-side snap to the outermost consensus edge (thick multi-line frames)
+    padClipped: true
+    // add a transparent margin when cut-out art touches the canvas edge
   });
   var now = () => globalThis.performance?.now?.() ?? Date.now();
   function toFull(level, s) {
@@ -1003,25 +1062,34 @@
     const px = 1 / level.scale;
     const rotLimit = opts.rotationTolerance * Math.PI / 180 + 1e-6;
     const results = [];
-    const scoreOf = (r) => evidence(r) * (0.6 + 0.4 * r.level.consistency) * (0.7 + 0.3 * r.level.sideBalance) * aspectPrior(r.shape, opts.aspectPrior);
-    const hyps = [
-      { tieAspect: baseAspect(shape), lockRotation: true, canonical: true },
-      { tieAspect: 0, lockRotation: shape === "circle", canonical: false }
-    ];
+    const scoreOf = (r) => evidence(r) * (0.6 + 0.4 * r.level.consistency) * (0.7 + 0.3 * r.level.sideBalance) * aspectPrior(r.shape, opts.aspectPrior, opts.aspectFree);
+    const want = new Set(String(opts.hypotheses).split(","));
+    const excellent = (r) => r && r.inlier >= 0.88 && r.level.coverage >= 0.88;
+    const weak = (r) => !r || r.inlier < 0.75 || r.level.coverage < 0.8;
+    const H = {
+      regular: { tieAspect: baseAspect(shape), lockRotation: true, canonical: true, gate: shape === "circle" ? () => true : weak },
+      upright: { tieAspect: 0, lockRotation: true, canonical: false, gate: () => true },
+      free: { tieAspect: 0, lockRotation: shape === "circle", canonical: false, gate: (r) => !excellent(r) }
+    };
+    const order = shape === "circle" ? ["regular", "free"] : ["upright", "free", "regular"].filter((k) => want.has(k));
+    const hyps = order.filter((k) => k !== "free" || opts.rotationTolerance > 0 || shape === "circle").map((k) => ({ ...H[k], name: k }));
+    const same = (a, b) => Math.abs(a.cx - b.cx) < 1 && Math.abs(a.cy - b.cy) < 1 && Math.abs(a.w - b.w) < 1.5 && Math.abs(a.h - b.h) < 1.5 && Math.abs((a.rot || 0) - (b.rot || 0)) < 2e-3;
     for (const { c, sc: coarse } of picked) {
       const lead = results.reduce((b, r) => !b || r.score > b.score ? r : b, null);
       if (lead && lead.score > 0.8 && coarse.score < 0.8 * lead.coarse.score) break;
       let chosen = null;
       for (const hyp of hyps) {
-        if (!hyp.canonical && chosen && chosen.inlier >= 0.88 && chosen.level.coverage >= 0.88) continue;
-        const r = runHypothesis(img, level, toFull(level, c), shape, hyp, { px, rotLimit, scan: opts.scanThickness });
+        if (chosen && !hyp.gate(chosen)) continue;
+        const r = runHypothesis(img, level, toFull(level, c), shape, hyp, { px, rotLimit, scan: opts.scanThickness, snap: opts.snapOuter });
         r.coarse = coarse;
         r.score = scoreOf(r);
         if (!Number.isFinite(r.score) || ![r.shape.cx, r.shape.cy, r.shape.w, r.shape.h].every(Number.isFinite)) continue;
         r.canonical = hyp.canonical;
+        r.hypothesis = hyp.name;
         if (opts.debug) (opts.debugLog ??= []).push({
           shape,
           canonical: hyp.canonical,
+          hypothesis: hyp.name,
           cx: r.shape.cx,
           cy: r.shape.cy,
           w: r.shape.w,
@@ -1036,8 +1104,10 @@
           score: r.score,
           from: { cx: c.cx / level.scale, w: c.w / level.scale, coarse: coarse.score }
         });
+        const dup = results.some((q) => same(q.shape, r.shape));
         if (!chosen) chosen = r;
         else if (r.score > chosen.score * 1.04 + 5e-3) chosen = r;
+        if (dup) break;
       }
       if (chosen) results.push(chosen);
     }
@@ -1058,16 +1128,26 @@
     const e = Math.min(r.level.coverage, r.inlier + 0.1);
     return Number.isFinite(r.band) ? 0.5 * e + 0.5 * Math.min(e, r.band + 0.1) : e;
   }
-  function aspectPrior(s, k) {
-    const dev = Math.abs(s.w / s.h / baseAspect(s.shape) - 1);
+  function aspectPrior(s, k, free = 0) {
+    const dev = Math.max(0, Math.abs(s.w / s.h / baseAspect(s.shape) - 1) - free);
     return Math.max(0.5, 1 - k * dev);
   }
-  function runHypothesis(img, level, start, shape, hyp, { px, rotLimit, scan }) {
+  function runHypothesis(img, level, start, shape, hyp, { px, rotLimit, scan, snap }) {
     const rl = shape === "circle" || hyp.lockRotation ? 0 : rotLimit;
     const common = { rotLimit: rl, tieAspect: hyp.tieAspect, lockRotation: hyp.lockRotation };
     let r = refine(img, start, { px, ...common, minRadius: scan ? 2.5 : 1.6 });
     let shapeFull = r.shape;
     let thickness = 0, band = NaN;
+    if (snap) {
+      const outward = Math.max(6, 0.05 * meanApothem(shapeFull));
+      const sn = snapOuterPerSide(img, shapeFull, { outward, inward: Math.max(2, 0.5 * px) });
+      if (sn.obs.length >= 24) {
+        const free = [true, true, true, true, shape !== "circle" && !hyp.lockRotation];
+        let f = fitShape(shapeFull, sn.obs, { tukey: outward + 4, iterations: 6, free, rotLimit: rl, tieAspect: hyp.tieAspect });
+        f = fitShape(f.shape, sn.obs, { tukey: 3, iterations: 4, free, rotLimit: rl, tieAspect: hyp.tieAspect });
+        if ([f.shape.cx, f.shape.cy, f.shape.w, f.shape.h].every(Number.isFinite)) shapeFull = f.shape;
+      }
+    }
     if (scan) {
       const sc = edgeScan(img, shapeFull, { thrAbs: 0.25 * (r.observation?.ref ?? 0) });
       const an = analyseScan(sc);
@@ -1104,6 +1184,55 @@
   function detectBorder(img, options = {}) {
     const opts = { ...DEFAULTS, ...options };
     if (!SHAPES.includes(opts.shape)) opts.shape = DEFAULTS.shape;
+    const m = opts.padClipped ? clippedMargin(img, opts) : 0;
+    if (!m) return detectCore(img, opts);
+    const t0 = now();
+    const padded = padImage(img, m);
+    const padMs = now() - t0;
+    const r = detectCore(padded, opts);
+    r.cx -= m;
+    r.cy -= m;
+    if (!r.stats) {
+      r.width = img.width;
+      r.height = img.height;
+    }
+    if (r.rival) {
+      r.rival.cx -= m;
+      r.rival.cy -= m;
+    }
+    r.imageWidth = img.width;
+    r.imageHeight = img.height;
+    r.timings.prep += padMs;
+    r.timings.total += padMs;
+    r.padded = m;
+    return r;
+  }
+  function clippedMargin(img, opts = DEFAULTS) {
+    const { width: w, height: h, data } = img;
+    const a = (x, y) => data[(y * w + x) * 4 + 3];
+    const corners = [a(0, 0), a(w - 1, 0), a(0, h - 1), a(w - 1, h - 1)].filter((v) => v < 16).length;
+    if (corners < 3) return 0;
+    let opaque = 0;
+    const step = Math.max(1, Math.floor(Math.max(w, h) / 1024));
+    for (let x = 0; x < w; x += step) {
+      if (a(x, 0) > 16) opaque++;
+      if (a(x, h - 1) > 16) opaque++;
+    }
+    for (let y = 0; y < h; y += step) {
+      if (a(0, y) > 16) opaque++;
+      if (a(w - 1, y) > 16) opaque++;
+    }
+    if (!opaque) return 0;
+    return Math.max(4, Math.ceil(3 * Math.max(w, h) / (opts.coarseSize || 512)));
+  }
+  function padImage(img, m) {
+    const { width: w, height: h, data } = img;
+    const W = w + 2 * m, H = h + 2 * m;
+    const out = new Uint8ClampedArray(W * H * 4);
+    for (let y = 0; y < h; y++) out.set(data.subarray(y * w * 4, (y + 1) * w * 4), ((y + m) * W + m) * 4);
+    return { width: W, height: H, data: out };
+  }
+  function detectCore(img, opts) {
     const timings = { prep: 0, candidates: 0, scoring: 0, refine: 0, total: 0 };
     const t0 = now();
     const level = computeEdges(buildLevel(img, opts.coarseSize));

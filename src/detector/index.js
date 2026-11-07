@@ -11,10 +11,10 @@
 import { buildLevel, computeEdges, edgePixels } from "./image.js";
 import { polygonCandidates, circleCandidates, dedupe, searchRegion } from "./hough.js";
 import { scorePerimeter, smoothstep } from "./score.js";
-import { refine, edgeScan, analyseScan, bandCoverage } from "./refine.js";
+import { refine, edgeScan, analyseScan, bandCoverage, snapOuterPerSide, fitShape } from "./refine.js";
 import { SHAPES, baseAspect, offsetShape, meanApothem, signedDistance } from "./shapes.js";
 
-export const DETECTOR_VERSION = 1;
+export const DETECTOR_VERSION = 2;
 
 export const DEFAULTS = Object.freeze({
   shape: "hex-pointy",
@@ -34,7 +34,15 @@ export const DEFAULTS = Object.freeze({
   refineTop: 4,
   scanThickness: true,
   timeBudget: 800,         // ms; safety cap: remaining fallback shapes are skipped after this
-  aspectPrior: 2.5,        // score penalty per unit of aspect deviation from the regular shape
+  aspectPrior: 2.5,        // score penalty per unit of aspect deviation beyond aspectFree
+  aspectFree: 0.035,       // aspect deviation (fraction) that costs nothing: real frames are often 2-3 % off regular
+  hypotheses: "upright,free", // refinement hypotheses per polygon candidate (see detectShape);
+                           // add "regular" for a regular-aspect fit when evidence is weak. Circles
+                           // always try circle (regular) and ellipse (free).
+  coarseRotations: false,  // also search +-2.5 deg rotations at the coarse stage (the histogram's
+                           // angular tolerance and the "free" refinement already cover them)
+  snapOuter: true,         // per-side snap to the outermost consensus edge (thick multi-line frames)
+  padClipped: true,        // add a transparent margin when cut-out art touches the canvas edge
 });
 
 const now = () => (globalThis.performance?.now?.() ?? Date.now());
@@ -106,33 +114,46 @@ function detectShape(img, level, edges, shape, opts, timings, { minCoarse = 0 } 
   const rotLimit = (opts.rotationTolerance * Math.PI) / 180 + 1e-6;
   const results = [];
   const scoreOf = (r) => evidence(r) * (0.6 + 0.4 * r.level.consistency) * (0.7 + 0.3 * r.level.sideBalance) *
-    aspectPrior(r.shape, opts.aspectPrior);
-  // Two hypotheses per candidate: "canonical" (regular aspect, no rotation) and "free"
-  // (aspect within tolerance, rotation within tolerance). When art hides one or two sides
-  // the free fit is under-determined and can drift to a slightly stretched hex that scores
-  // just as well; the canonical one wins unless the free one is clearly better.
-  const hyps = [
-    { tieAspect: baseAspect(shape), lockRotation: true, canonical: true },
-    { tieAspect: 0, lockRotation: shape === "circle", canonical: false },
-  ];
+    aspectPrior(r.shape, opts.aspectPrior, opts.aspectFree);
+  // Hypotheses per candidate: "upright" (free aspect, no rotation), "free" (aspect and rotation
+  // within tolerance) and "regular" (regular aspect, no rotation). Real frames are often a few
+  // percent off regular, so upright goes first; free only runs when upright leaves room for
+  // improvement, and regular only when the evidence is weak (heavy occlusion), where the
+  // constrained model resists drifting onto art. A later hypothesis must beat the current
+  // choice clearly. Circles: regular = circle, free = ellipse.
+  const want = new Set(String(opts.hypotheses).split(","));
+  const excellent = (r) => r && r.inlier >= 0.88 && r.level.coverage >= 0.88;
+  const weak = (r) => !r || r.inlier < 0.75 || r.level.coverage < 0.8;
+  const H = {
+    regular: { tieAspect: baseAspect(shape), lockRotation: true, canonical: true, gate: shape === "circle" ? () => true : weak },
+    upright: { tieAspect: 0, lockRotation: true, canonical: false, gate: () => true },
+    free: { tieAspect: 0, lockRotation: shape === "circle", canonical: false, gate: (r) => !excellent(r) },
+  };
+  const order = shape === "circle" ? ["regular", "free"] : ["upright", "free", "regular"].filter((k) => want.has(k));
+  const hyps = order.filter((k) => k !== "free" || opts.rotationTolerance > 0 || shape === "circle").map((k) => ({ ...H[k], name: k }));
+  // Several coarse candidates usually converge to the same border; once a fit reproduces an
+  // earlier one, the rest of that candidate's hypotheses would too.
+  const same = (a, b) => Math.abs(a.cx - b.cx) < 1 && Math.abs(a.cy - b.cy) < 1 && Math.abs(a.w - b.w) < 1.5 &&
+    Math.abs(a.h - b.h) < 1.5 && Math.abs((a.rot || 0) - (b.rot || 0)) < 0.002;
   for (const { c, sc: coarse } of picked) {
     // Clear winner already refined and this candidate was much weaker at the coarse stage.
     const lead = results.reduce((b, r) => (!b || r.score > b.score ? r : b), null);
     if (lead && lead.score > 0.8 && coarse.score < 0.8 * lead.coarse.score) break;
     let chosen = null;
     for (const hyp of hyps) {
-      // Free fit only when the regular one leaves room for improvement.
-      if (!hyp.canonical && chosen && chosen.inlier >= 0.88 && chosen.level.coverage >= 0.88) continue;
-      const r = runHypothesis(img, level, toFull(level, c), shape, hyp, { px, rotLimit, scan: opts.scanThickness });
+      if (chosen && !hyp.gate(chosen)) continue;
+      const r = runHypothesis(img, level, toFull(level, c), shape, hyp, { px, rotLimit, scan: opts.scanThickness, snap: opts.snapOuter });
       r.coarse = coarse;
       r.score = scoreOf(r);
       if (!Number.isFinite(r.score) || ![r.shape.cx, r.shape.cy, r.shape.w, r.shape.h].every(Number.isFinite)) continue;
-      r.canonical = hyp.canonical;
-      if (opts.debug) (opts.debugLog ??= []).push({ shape, canonical: hyp.canonical, cx: r.shape.cx, cy: r.shape.cy, w: r.shape.w, h: r.shape.h,
+      r.canonical = hyp.canonical; r.hypothesis = hyp.name;
+      if (opts.debug) (opts.debugLog ??= []).push({ shape, canonical: hyp.canonical, hypothesis: hyp.name, cx: r.shape.cx, cy: r.shape.cy, w: r.shape.w, h: r.shape.h,
         rot: r.shape.rot, thickness: r.thickness, cov: r.level.coverage, cons: r.level.consistency, bal: r.level.sideBalance,
         inlier: r.inlier, band: r.band, score: r.score, from: { cx: c.cx / level.scale, w: c.w / level.scale, coarse: coarse.score } });
+      const dup = results.some((q) => same(q.shape, r.shape));
       if (!chosen) chosen = r;
       else if (r.score > chosen.score * 1.04 + 0.005) chosen = r;
+      if (dup) break;
     }
     if (chosen) results.push(chosen);
   }
@@ -156,19 +177,36 @@ function evidence(r) {
   return Number.isFinite(r.band) ? 0.5 * e + 0.5 * Math.min(e, r.band + 0.1) : e;
 }
 
-/** Painted borders are almost always regular; stretched fits must earn it. */
-function aspectPrior(s, k) {
-  const dev = Math.abs(s.w / s.h / baseAspect(s.shape) - 1);
+/**
+ * Painted borders are close to regular, but real frames are often a few percent off (e.g. a
+ * pointy hex drawn into a 433x512 canvas has aspect 0.845, not 0.866). Deviations up to
+ * `free` cost nothing; beyond that, stretched fits must earn it.
+ */
+function aspectPrior(s, k, free = 0) {
+  const dev = Math.max(0, Math.abs(s.w / s.h / baseAspect(s.shape) - 1) - free);
   return Math.max(0.5, 1 - k * dev);
 }
 
-function runHypothesis(img, level, start, shape, hyp, { px, rotLimit, scan }) {
+function runHypothesis(img, level, start, shape, hyp, { px, rotLimit, scan, snap }) {
   const rl = shape === "circle" || hyp.lockRotation ? 0 : rotLimit;
   const common = { rotLimit: rl, tieAspect: hyp.tieAspect, lockRotation: hyp.lockRotation };
   // First pass only needs to get within a few px: the outer-edge pass below refines to 1.6 px.
   let r = refine(img, start, { px, ...common, minRadius: scan ? 2.5 : 1.6 });
   let shapeFull = r.shape;
   let thickness = 0, band = NaN;
+  if (snap) {
+    // Thick frames: make every side sit on the outermost consensus edge (see snapOuterPerSide).
+    const outward = Math.max(6, 0.05 * meanApothem(shapeFull));
+    const sn = snapOuterPerSide(img, shapeFull, { outward, inward: Math.max(2, 0.5 * px) });
+    if (sn.obs.length >= 24) {
+      const free = [true, true, true, true, shape !== "circle" && !hyp.lockRotation];
+      // The snapped edges can be far from the current outline (a whole band width), so fit
+      // wide first, then tighten to drop the odd outlier.
+      let f = fitShape(shapeFull, sn.obs, { tukey: outward + 4, iterations: 6, free, rotLimit: rl, tieAspect: hyp.tieAspect });
+      f = fitShape(f.shape, sn.obs, { tukey: 3, iterations: 4, free, rotLimit: rl, tieAspect: hyp.tieAspect });
+      if ([f.shape.cx, f.shape.cy, f.shape.w, f.shape.h].every(Number.isFinite)) shapeFull = f.shape;
+    }
+  }
   if (scan) {
     const sc = edgeScan(img, shapeFull, { thrAbs: 0.25 * (r.observation?.ref ?? 0) });
     const an = analyseScan(sc);
@@ -210,6 +248,50 @@ function runHypothesis(img, level, start, shape, hyp, { px, rotLimit, scan }) {
 export function detectBorder(img, options = {}) {
   const opts = { ...DEFAULTS, ...options };
   if (!SHAPES.includes(opts.shape)) opts.shape = DEFAULTS.shape;
+  // Token art is often cropped exactly to the frame, so the outer edge lies ON the canvas
+  // boundary, where no gradient can be measured. Outside the canvas is transparent in Foundry,
+  // so a cut-out image whose opaque pixels reach the edge gets a transparent margin.
+  const m = opts.padClipped ? clippedMargin(img, opts) : 0;
+  if (!m) return detectCore(img, opts);
+  const t0 = now();
+  const padded = padImage(img, m);
+  const padMs = now() - t0;
+  const r = detectCore(padded, opts);
+  r.cx -= m; r.cy -= m;
+  if (!r.stats) { r.width = img.width; r.height = img.height; } // nothing found: whole image
+  if (r.rival) { r.rival.cx -= m; r.rival.cy -= m; }
+  r.imageWidth = img.width; r.imageHeight = img.height;
+  r.timings.prep += padMs; r.timings.total += padMs;
+  r.padded = m;
+  return r;
+}
+
+/** Margin (px) to add when a cut-out image has opaque pixels on its boundary; 0 otherwise. */
+export function clippedMargin(img, opts = DEFAULTS) {
+  const { width: w, height: h, data } = img;
+  const a = (x, y) => data[(y * w + x) * 4 + 3];
+  // Cut-out art: at least three transparent corners (an opaque photo/JPEG must not get an
+  // artificial rectangular edge).
+  const corners = [a(0, 0), a(w - 1, 0), a(0, h - 1), a(w - 1, h - 1)].filter((v) => v < 16).length;
+  if (corners < 3) return 0;
+  let opaque = 0;
+  const step = Math.max(1, Math.floor(Math.max(w, h) / 1024));
+  for (let x = 0; x < w; x += step) { if (a(x, 0) > 16) opaque++; if (a(x, h - 1) > 16) opaque++; }
+  for (let y = 0; y < h; y += step) { if (a(0, y) > 16) opaque++; if (a(w - 1, y) > 16) opaque++; }
+  if (!opaque) return 0;
+  // >= 3 px at the coarse level so its edge filter sees the transition.
+  return Math.max(4, Math.ceil((3 * Math.max(w, h)) / (opts.coarseSize || 512)));
+}
+
+export function padImage(img, m) {
+  const { width: w, height: h, data } = img;
+  const W = w + 2 * m, H = h + 2 * m;
+  const out = new Uint8ClampedArray(W * H * 4);
+  for (let y = 0; y < h; y++) out.set(data.subarray(y * w * 4, (y + 1) * w * 4), ((y + m) * W + m) * 4);
+  return { width: W, height: H, data: out };
+}
+
+function detectCore(img, opts) {
   const timings = { prep: 0, candidates: 0, scoring: 0, refine: 0, total: 0 };
   const t0 = now();
   const level = computeEdges(buildLevel(img, opts.coarseSize));
