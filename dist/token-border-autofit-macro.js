@@ -312,12 +312,6 @@
 
   // src/detector/hough.js
   var DEG = Math.PI / 180;
-  function angleWeight(t, phi, cosTol2) {
-    const c = Math.cos(t - phi);
-    const c2 = c * c;
-    if (c2 <= cosTol2) return 0;
-    return (c2 - cosTol2) / (1 - cosTol2);
-  }
   function smooth5(h) {
     const out = new Float32Array(h.length);
     for (let i = 2; i < h.length - 2; i++) out[i] = (h[i - 2] + 4 * h[i - 1] + 6 * h[i] + 4 * h[i + 1] + h[i + 2]) / 16;
@@ -344,15 +338,14 @@
   function orientationCombos(opts) {
     const rots = [];
     const tol = Math.max(0, opts.rotationTolerance);
-    const step = Math.max(1, Math.min(2, tol));
-    if (tol < 0.5) rots.push(0);
-    else for (let r = -tol; r <= tol + 1e-9; r += step) rots.push(r);
-    if (!rots.some((r) => Math.abs(r) < 1e-9)) rots.push(0);
-    const aspects = [];
+    rots.push(0);
+    if (tol >= 1.5) {
+      const r = Math.min(tol, 2.5);
+      rots.push(-r, r);
+    }
+    const aspects = [1];
     const at = Math.max(0, opts.aspectTolerance);
-    if (at < 0.01) aspects.push(1);
-    else for (let a = 1 - at; a <= 1 + at + 1e-9; a += Math.max(0.03, at / 3)) aspects.push(a);
-    if (!aspects.some((a) => Math.abs(a - 1) < 1e-9)) aspects.push(1);
+    for (let a = 0.04; a <= at + 1e-9; a += 0.04) aspects.push(1 - a, 1 + a);
     const out = [];
     for (const r of rots) for (const a of aspects) out.push({ rot: r * DEG, aspect: a });
     return out;
@@ -365,6 +358,12 @@
     const pairsN = shape === "square" ? 2 : 3;
     const out = [];
     const corners = [[reg.x0, reg.y0], [reg.x1, reg.y0], [reg.x0, reg.y1], [reg.x1, reg.y1]];
+    const ec = new Float32Array(edges.count), es = new Float32Array(edges.count);
+    for (let e = 0; e < edges.count; e++) {
+      ec[e] = Math.cos(edges.t[e]);
+      es[e] = Math.sin(edges.t[e]);
+    }
+    const den = 1 / (1 - cosTol2);
     for (const combo of orientationCombos(opts)) {
       const w1 = baseAspect(shape) * combo.aspect;
       const sides = localSides(shape, w1, 1);
@@ -373,17 +372,16 @@
       for (let k = 0; k < pairsN; k++) {
         const sd = sides[k];
         const nx = sd.nx * c - sd.ny * s, ny = sd.nx * s + sd.ny * c;
-        let phi = Math.atan2(ny, nx);
-        if (phi < 0) phi += Math.PI;
-        if (phi >= Math.PI) phi -= Math.PI;
-        pairs.push({ nx, ny, phi, a1: sd.a, hist: new Float32Array(2 * D + 1) });
+        pairs.push({ nx, ny, a1: sd.a, hist: new Float32Array(2 * D + 1) });
       }
       for (let e = 0; e < edges.count; e++) {
-        const x = edges.x[e], y = edges.y[e], m = edges.m[e], t = edges.t[e];
+        const x = edges.x[e], y = edges.y[e], m = edges.m[e], cx0 = ec[e], sy0 = es[e];
         for (let k = 0; k < pairsN; k++) {
           const p = pairs[k];
-          const wgt = angleWeight(t, p.phi, cosTol2);
-          if (wgt <= 0) continue;
+          const cd = cx0 * p.nx + sy0 * p.ny;
+          const c2 = cd * cd;
+          if (c2 <= cosTol2) continue;
+          const wgt = (c2 - cosTol2) * den;
           const pos = x * p.nx + y * p.ny + D;
           const i = Math.floor(pos), f = pos - i;
           p.hist[i] += m * wgt * (1 - f);
@@ -777,7 +775,7 @@
     return { shape: fromVec(s, v), ...last };
   }
   function observeEdges(img, s, R, { mode = "nearest", nPts } = {}) {
-    const N = nPts ?? Math.round(Math.min(600, Math.max(120, perimeterLength(s) / 5)));
+    const N = nPts ?? Math.round(Math.min(300, Math.max(120, perimeterLength(s) / 8)));
     const pts = perimeterPoints(s, N, 0.08);
     const step = Math.max(0.25, Math.min(1, R / 16));
     const raw = [];
@@ -826,18 +824,18 @@
     }
     return { obs, n: pts.length, ref, thr };
   }
-  function refine(img, s, { px = 1, rotLimit = Infinity, startRadius, finalMode = "nearest", tieAspect = 0, lockRotation = false } = {}) {
+  function refine(img, s, { px = 1, rotLimit = Infinity, startRadius, finalMode = "nearest", tieAspect = 0, lockRotation = false, minRadius = 1.6 } = {}) {
     let cur = { ...s };
     if (tieAspect) cur.w = tieAspect * cur.h;
     if (lockRotation) cur.rot = 0;
     const free = [true, true, true, true, s.shape !== "circle" && !lockRotation];
     const radii = [];
     let R = startRadius ?? Math.max(4, 3 * px);
-    while (R > 1.6) {
+    while (R > minRadius) {
       radii.push(R);
       R /= 2;
     }
-    radii.push(1.6);
+    radii.push(minRadius);
     let fit = null, last = null;
     for (let i = 0; i < radii.length; i++) {
       const r = radii[i];
@@ -853,7 +851,7 @@
     const a = meanApothem(s);
     const tMin = -inner * a, tMax = outer * a;
     const step = Math.max(0.5, a / 500);
-    const pts = perimeterPoints(s, 240, 0.1);
+    const pts = perimeterPoints(s, 160, 0.1);
     const nb = Math.floor((tMax - tMin) / step) + 1;
     const cov = new Float32Array(nb);
     for (const p of pts) {
@@ -891,7 +889,7 @@
     const innerPk = innerCands.reduce((b, p) => !b || p.c > b.c ? p : b, null);
     return { outer: outerPk.t, outerCov: outerPk.c, inner: innerPk ? innerPk.t : outerPk.t, innerCov: innerPk?.c ?? 0, peaks };
   }
-  function bandCoverage(img, s, thickness, { nPts = 180 } = {}) {
+  function bandCoverage(img, s, thickness, { nPts = 120 } = {}) {
     if (!(thickness > 1.5)) return NaN;
     const pts = perimeterPoints(s, nPts, 0.1);
     const tol = Math.max(1.5, thickness * 0.15);
@@ -1004,7 +1002,7 @@
     ];
     for (const { c, sc: coarse } of picked) {
       const lead = results.reduce((b, r) => !b || r.score > b.score ? r : b, null);
-      if (lead && lead.score > 0.8 && coarse.score < 0.75 * lead.coarse.score) break;
+      if (lead && lead.score > 0.8 && coarse.score < 0.8 * lead.coarse.score) break;
       let chosen = null;
       for (const hyp of hyps) {
         if (!hyp.canonical && chosen && chosen.inlier >= 0.88 && chosen.level.coverage >= 0.88) continue;
@@ -1059,7 +1057,7 @@
   function runHypothesis(img, level, start, shape, hyp, { px, rotLimit, scan }) {
     const rl = shape === "circle" || hyp.lockRotation ? 0 : rotLimit;
     const common = { rotLimit: rl, tieAspect: hyp.tieAspect, lockRotation: hyp.lockRotation };
-    let r = refine(img, start, { px, ...common });
+    let r = refine(img, start, { px, ...common, minRadius: scan ? 2.5 : 1.6 });
     let shapeFull = r.shape;
     let thickness = 0, band = NaN;
     if (scan) {
@@ -1851,10 +1849,22 @@
     onDown(e) {
       if (e.button !== 0) return;
       this.view.focus({ preventScroll: true });
-      const h = e.target?.dataset?.h;
       const p0 = this.toImage(e);
       const s0 = this.get();
-      let mode = h ?? null;
+      let h = e.target?.dataset?.h ?? null;
+      if (!h) {
+        const x0 = s0.cx - s0.w / 2, y0 = s0.cy - s0.h / 2;
+        const pos = { nw: [x0, y0], ne: [x0 + s0.w, y0], se: [x0 + s0.w, y0 + s0.h], sw: [x0, y0 + s0.h], n: [s0.cx, y0], e: [x0 + s0.w, s0.cy], s: [s0.cx, y0 + s0.h], w: [x0, s0.cy] };
+        let best = 12 / (this.k || 1);
+        for (const [name, [hx, hy]] of Object.entries(pos)) {
+          const d = Math.hypot(p0.x - hx, p0.y - hy);
+          if (d < best) {
+            best = d;
+            h = name;
+          }
+        }
+      }
+      let mode = h;
       if (!mode) {
         if (Math.abs(p0.x - s0.cx) <= s0.w / 2 + 6 / this.k && Math.abs(p0.y - s0.cy) <= s0.h / 2 + 6 / this.k) mode = "move";
         else return;

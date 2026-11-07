@@ -112,7 +112,7 @@ function detectShape(img, level, edges, shape, opts, timings) {
   for (const { c, sc: coarse } of picked) {
     // Clear winner already refined and this candidate was much weaker at the coarse stage.
     const lead = results.reduce((b, r) => (!b || r.score > b.score ? r : b), null);
-    if (lead && lead.score > 0.8 && coarse.score < 0.75 * lead.coarse.score) break;
+    if (lead && lead.score > 0.8 && coarse.score < 0.8 * lead.coarse.score) break;
     let chosen = null;
     for (const hyp of hyps) {
       // Free fit only when the regular one leaves room for improvement.
@@ -159,7 +159,8 @@ function aspectPrior(s, k) {
 function runHypothesis(img, level, start, shape, hyp, { px, rotLimit, scan }) {
   const rl = shape === "circle" || hyp.lockRotation ? 0 : rotLimit;
   const common = { rotLimit: rl, tieAspect: hyp.tieAspect, lockRotation: hyp.lockRotation };
-  let r = refine(img, start, { px, ...common });
+  // First pass only needs to get within a few px: the outer-edge pass below refines to 1.6 px.
+  let r = refine(img, start, { px, ...common, minRadius: scan ? 2.5 : 1.6 });
   let shapeFull = r.shape;
   let thickness = 0, band = NaN;
   if (scan) {

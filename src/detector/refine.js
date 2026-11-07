@@ -123,7 +123,7 @@ export function fitShape(s, obs, { tukey = 2, iterations = 4, free = [true, true
  * mode "outer": outermost local maximum that reaches half of the window maximum.
  */
 export function observeEdges(img, s, R, { mode = "nearest", nPts } = {}) {
-  const N = nPts ?? Math.round(Math.min(600, Math.max(120, perimeterLength(s) / 5)));
+  const N = nPts ?? Math.round(Math.min(300, Math.max(120, perimeterLength(s) / 8)));
   const pts = perimeterPoints(s, N, 0.08);
   const step = Math.max(0.25, Math.min(1, R / 16));
   const raw = [];
@@ -166,15 +166,15 @@ export function observeEdges(img, s, R, { mode = "nearest", nPts } = {}) {
 /**
  * Iterative refinement. `px` = source pixels per coarse-level pixel.
  */
-export function refine(img, s, { px = 1, rotLimit = Infinity, startRadius, finalMode = "nearest", tieAspect = 0, lockRotation = false } = {}) {
+export function refine(img, s, { px = 1, rotLimit = Infinity, startRadius, finalMode = "nearest", tieAspect = 0, lockRotation = false, minRadius = 1.6 } = {}) {
   let cur = { ...s };
   if (tieAspect) cur.w = tieAspect * cur.h;
   if (lockRotation) cur.rot = 0;
   const free = [true, true, true, true, s.shape !== "circle" && !lockRotation];
   const radii = [];
   let R = startRadius ?? Math.max(4, 3 * px);
-  while (R > 1.6) { radii.push(R); R /= 2; }
-  radii.push(1.6);
+  while (R > minRadius) { radii.push(R); R /= 2; }
+  radii.push(minRadius);
   let fit = null, last = null;
   for (let i = 0; i < radii.length; i++) {
     const r = radii[i];
@@ -195,7 +195,7 @@ export function edgeScan(img, s, { inner = 0.16, outer = 0.08, thrAbs = 0 } = {}
   const a = meanApothem(s);
   const tMin = -inner * a, tMax = outer * a;
   const step = Math.max(0.5, a / 500);
-  const pts = perimeterPoints(s, 240, 0.1);
+  const pts = perimeterPoints(s, 160, 0.1);
   const nb = Math.floor((tMax - tMin) / step) + 1;
   const cov = new Float32Array(nb);
   for (const p of pts) {
@@ -243,7 +243,7 @@ export { offsetShape };
  * inner edge of the band (t ~ -thickness). A painted border is a band; an art silhouette
  * that happens to line up with the outline only has the outer edge.
  */
-export function bandCoverage(img, s, thickness, { nPts = 180 } = {}) {
+export function bandCoverage(img, s, thickness, { nPts = 120 } = {}) {
   if (!(thickness > 1.5)) return NaN;
   const pts = perimeterPoints(s, nPts, 0.1);
   const tol = Math.max(1.5, thickness * 0.15);

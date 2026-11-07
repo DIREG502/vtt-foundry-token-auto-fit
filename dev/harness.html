@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TBAF browser harness</title>
+<link rel="stylesheet" href="../styles/token-border-autofit.css">
+<style>
+  :root { color-scheme: light dark; --bg: #1b1d22; --fg: #e8e8e8; --muted: #9aa; --ok: #5c5; --bad: #e66; }
+  body { margin: 0; padding: 16px; font: 14px/1.4 system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+  h1 { font-size: 18px; margin: 0 0 8px; }
+  table { border-collapse: collapse; font-variant-numeric: tabular-nums; margin-bottom: 16px; }
+  td, th { padding: 3px 8px; border-bottom: 1px solid #333; text-align: right; }
+  td:first-child, th:first-child { text-align: left; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+  #editorWrap { display: flex; flex-direction: column; height: 620px; max-width: 760px; }
+  #state { font-family: monospace; color: var(--muted); }
+  select, button { font: inherit; }
+</style>
+</head>
+<body>
+<h1>Token Border Auto-Fit: browser harness</h1>
+<p id="summary">Running detector in the browser…</p>
+<table id="results"><thead><tr><th>image</th><th>size</th><th>shape</th><th>conf</th><th>median ms</th><th>max err %</th><th></th></tr></thead><tbody></tbody></table>
+<p>Alignment editor: <select id="pick"></select></p>
+<div id="editorWrap"></div>
+<p id="state"></p>
+<script type="module">
+import { detectBorder } from "../src/detector/index.js";
+import { AlignEditor } from "../src/ui/align-editor.js";
+
+const expected = await (await fetch("../test-images/expected.json")).json();
+const files = Object.keys(expected);
+const tbody = document.querySelector("#results tbody");
+const dets = {};
+
+const RAW = new URLSearchParams(location.search).has("raw");
+const rawIndex = RAW ? await (await fetch("../test-output/raw/index.json")).json() : null;
+async function pixels(src) {
+  if (RAW) {
+    const f = src.split("/").pop(), r = rawIndex[f];
+    const buf = await (await fetch(`../test-output/raw/${r.raw}`)).arrayBuffer();
+    return { width: r.width, height: r.height, data: new Uint8ClampedArray(buf) };
+  }
+  const im = new Image();
+  im.src = src;
+  await im.decode();
+  const c = document.createElement("canvas");
+  c.width = im.naturalWidth; c.height = im.naturalHeight;
+  const ctx = c.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(im, 0, 0);
+  return ctx.getImageData(0, 0, c.width, c.height);
+}
+
+let pass = 0, worst = 0;
+for (const f of files) {
+  const gt = expected[f];
+  const img = await pixels(`../test-images/${f}`);
+  detectBorder(img, { shape: gt.shape }); // warm-up (JIT)
+  const times = []; let r;
+  for (let i = 0; i < 5; i++) { const t0 = performance.now(); r = detectBorder(img, { shape: gt.shape }); times.push(performance.now() - t0); }
+  times.sort((a, b) => a - b);
+  const ms = times[2];
+  worst = Math.max(worst, ms);
+  const err = Math.max(Math.hypot(r.cx - gt.cx, r.cy - gt.cy), Math.abs(r.width - gt.width), Math.abs(r.height - gt.height)) / gt.width;
+  const ok = err < 0.015 && r.shape === gt.shape;
+  if (ok) pass++;
+  dets[f] = r;
+  const tr = document.createElement("tr");
+  tr.innerHTML = `<td>${f.replace("synthetic-", "")}</td><td>${img.width}×${img.height}</td><td>${r.shape}</td><td>${(r.confidence * 100).toFixed(0)}%</td>
+    <td class="${ms < 300 ? "ok" : "bad"}">${ms.toFixed(0)}</td><td>${(err * 100).toFixed(2)}</td><td class="${ok ? "ok" : "bad"}">${ok ? "PASS" : "FAIL"}</td>`;
+  tbody.appendChild(tr);
+  await Promise.resolve();
+}
+document.getElementById("summary").textContent = `${pass}/${files.length} within 1.5 % — slowest median ${worst.toFixed(0)} ms (${navigator.userAgent.match(/(Chrome|Firefox|Safari)\/[\d.]+/)?.[0] ?? "browser"})`;
+window.__harness = { pass, total: files.length, worst };
+
+const pick = document.getElementById("pick");
+for (const f of files) pick.add(new Option(f.replace("synthetic-", ""), f));
+let editor = null;
+function openEditor(f) {
+  const wrap = document.getElementById("editorWrap");
+  editor?.destroy(); wrap.replaceChildren();
+  const d = dets[f];
+  editor = new AlignEditor(wrap, {
+    src: `../test-images/${f}`, width: d.imageWidth, height: d.imageHeight,
+    initial: { shape: d.shape, cx: d.cx, cy: d.cy, w: d.width, h: d.height, thickness: d.thickness },
+    onChange: (s) => { document.getElementById("state").textContent = JSON.stringify(Object.fromEntries(Object.entries(s).map(([k, v]) => [k, typeof v === "number" ? +v.toFixed(1) : v]))); },
+  });
+  window.__editor = editor;
+}
+pick.addEventListener("change", () => openEditor(pick.value));
+openEditor(files.find((f) => f.includes("gradient")) ?? files[0]);
+</script>
+</body>
+</html>

@@ -16,13 +16,6 @@ import { baseAspect, localSides } from "./shapes.js";
 
 const DEG = Math.PI / 180;
 
-function angleWeight(t, phi, cosTol2) {
-  // Unsigned angle difference between normals (mod PI).
-  const c = Math.cos(t - phi);
-  const c2 = c * c;
-  if (c2 <= cosTol2) return 0;
-  return (c2 - cosTol2) / (1 - cosTol2);
-}
 
 function smooth5(h) {
   const out = new Float32Array(h.length);
@@ -48,16 +41,14 @@ export function searchRegion(level, opts) {
 
 function orientationCombos(opts) {
   const rots = [];
+  // Coarse steps only: the histogram's angular tolerance covers +-angleTolerance and the
+  // full-resolution refinement finds the exact rotation/aspect.
   const tol = Math.max(0, opts.rotationTolerance);
-  const step = Math.max(1, Math.min(2, tol));
-  if (tol < 0.5) rots.push(0);
-  else for (let r = -tol; r <= tol + 1e-9; r += step) rots.push(r);
-  if (!rots.some((r) => Math.abs(r) < 1e-9)) rots.push(0);
-  const aspects = [];
+  rots.push(0);
+  if (tol >= 1.5) { const r = Math.min(tol, 2.5); rots.push(-r, r); }
+  const aspects = [1];
   const at = Math.max(0, opts.aspectTolerance);
-  if (at < 0.01) aspects.push(1);
-  else for (let a = 1 - at; a <= 1 + at + 1e-9; a += Math.max(0.03, at / 3)) aspects.push(a);
-  if (!aspects.some((a) => Math.abs(a - 1) < 1e-9)) aspects.push(1);
+  for (let a = 0.04; a <= at + 1e-9; a += 0.04) aspects.push(1 - a, 1 + a);
   const out = [];
   for (const r of rots) for (const a of aspects) out.push({ rot: r * DEG, aspect: a });
   return out;
@@ -75,6 +66,10 @@ export function polygonCandidates(level, edges, shape, opts) {
   const pairsN = shape === "square" ? 2 : 3;
   const out = [];
   const corners = [[reg.x0, reg.y0], [reg.x1, reg.y0], [reg.x0, reg.y1], [reg.x1, reg.y1]];
+  // Edge normals as unit vectors once, so the per-combo loop needs no trigonometry.
+  const ec = new Float32Array(edges.count), es = new Float32Array(edges.count);
+  for (let e = 0; e < edges.count; e++) { ec[e] = Math.cos(edges.t[e]); es[e] = Math.sin(edges.t[e]); }
+  const den = 1 / (1 - cosTol2);
 
   for (const combo of orientationCombos(opts)) {
     const w1 = baseAspect(shape) * combo.aspect; // width for unit height
@@ -84,18 +79,17 @@ export function polygonCandidates(level, edges, shape, opts) {
     for (let k = 0; k < pairsN; k++) {
       const sd = sides[k];
       const nx = sd.nx * c - sd.ny * s, ny = sd.nx * s + sd.ny * c;
-      let phi = Math.atan2(ny, nx);
-      if (phi < 0) phi += Math.PI;
-      if (phi >= Math.PI) phi -= Math.PI;
-      pairs.push({ nx, ny, phi, a1: sd.a, hist: new Float32Array(2 * D + 1) });
+      pairs.push({ nx, ny, a1: sd.a, hist: new Float32Array(2 * D + 1) });
     }
     // Projection histograms.
     for (let e = 0; e < edges.count; e++) {
-      const x = edges.x[e], y = edges.y[e], m = edges.m[e], t = edges.t[e];
+      const x = edges.x[e], y = edges.y[e], m = edges.m[e], cx0 = ec[e], sy0 = es[e];
       for (let k = 0; k < pairsN; k++) {
         const p = pairs[k];
-        const wgt = angleWeight(t, p.phi, cosTol2);
-        if (wgt <= 0) continue;
+        const cd = cx0 * p.nx + sy0 * p.ny; // cos of the angle between normals (sign irrelevant)
+        const c2 = cd * cd;
+        if (c2 <= cosTol2) continue;
+        const wgt = (c2 - cosTol2) * den;
         const pos = x * p.nx + y * p.ny + D;
         const i = Math.floor(pos), f = pos - i;
         p.hist[i] += m * wgt * (1 - f);

@@ -181,10 +181,20 @@ export class AlignEditor {
   onDown(e) {
     if (e.button !== 0) return;
     this.view.focus({ preventScroll: true });
-    const h = e.target?.dataset?.h;
     const p0 = this.toImage(e);
     const s0 = this.get();
-    let mode = h ?? null;
+    // Grab the nearest handle within 12 screen px (handles are small; exact hits are fiddly).
+    let h = e.target?.dataset?.h ?? null;
+    if (!h) {
+      const x0 = s0.cx - s0.w / 2, y0 = s0.cy - s0.h / 2;
+      const pos = { nw: [x0, y0], ne: [x0 + s0.w, y0], se: [x0 + s0.w, y0 + s0.h], sw: [x0, y0 + s0.h], n: [s0.cx, y0], e: [x0 + s0.w, s0.cy], s: [s0.cx, y0 + s0.h], w: [x0, s0.cy] };
+      let best = 12 / (this.k || 1);
+      for (const [name, [hx, hy]] of Object.entries(pos)) {
+        const d = Math.hypot(p0.x - hx, p0.y - hy);
+        if (d < best) { best = d; h = name; }
+      }
+    }
+    let mode = h;
     if (!mode) {
       // Inside the bounding box (generous) -> move.
       if (Math.abs(p0.x - s0.cx) <= s0.w / 2 + 6 / this.k && Math.abs(p0.y - s0.cy) <= s0.h / 2 + 6 / this.k) mode = "move";
