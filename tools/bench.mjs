@@ -10,6 +10,7 @@ import { detectBorder } from "../src/detector/index.js";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const args = Object.fromEntries(process.argv.slice(2).map((a) => { const [k, v] = a.replace(/^--/, "").split("="); return [k, v ?? true]; }));
 const runs = +(args.runs ?? 3);
+const extra = Object.fromEntries(Object.entries(args).filter(([k]) => k.startsWith("opt.")).map(([k, v]) => [k.slice(4), v === "true" ? true : v === "false" ? false : Number.isFinite(+v) ? +v : v]));
 const methods = (args.methods ?? "hough,grid").split(",");
 const expected = JSON.parse(fs.readFileSync(path.join(ROOT, "test-images/expected.json"), "utf8"));
 const files = Object.keys(expected).filter((f) => !args.only || f.includes(args.only));
@@ -19,10 +20,10 @@ for (const f of files) {
   const { data, info } = await sharp(path.join(ROOT, "test-images", f)).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   const img = { width: info.width, height: info.height, data };
   for (const method of methods) {
-    detectBorder(img, { shape: gt.shape, method }); // warm-up
+    detectBorder(img, { shape: gt.shape, method, ...extra }); // warm-up
     const times = [];
     let r;
-    for (let i = 0; i < runs; i++) { const t0 = performance.now(); r = detectBorder(img, { shape: gt.shape, method }); times.push(performance.now() - t0); }
+    for (let i = 0; i < runs; i++) { const t0 = performance.now(); r = detectBorder(img, { shape: gt.shape, method, ...extra }); times.push(performance.now() - t0); }
     times.sort((a, b) => a - b);
     const err = Math.max(Math.hypot(r.cx - gt.cx, r.cy - gt.cy), Math.abs(r.width - gt.width), Math.abs(r.height - gt.height)) / gt.width;
     (summary[method] ??= []).push({ f, ms: times[Math.floor(times.length / 2)], err, conf: r.confidence, t: r.timings });

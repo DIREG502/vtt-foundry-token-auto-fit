@@ -28,6 +28,8 @@ const args = Object.fromEntries(process.argv.slice(2).map((a) => {
   return [k, v ?? true];
 }));
 const TOL = 0.015;
+// --opt.<key>=<value> overrides a detector option (numbers/booleans parsed), for experiments.
+const extra = Object.fromEntries(Object.entries(args).filter(([k]) => k.startsWith("opt.")).map(([k, v]) => [k.slice(4), v === "true" ? true : v === "false" ? false : Number.isFinite(+v) ? +v : v]));
 
 const expected = fs.existsSync(path.join(IN, "expected.json")) ? JSON.parse(fs.readFileSync(path.join(IN, "expected.json"), "utf8")) : {};
 const files = fs.readdirSync(IN).filter((f) => /\.(png|jpe?g|webp|avif)$/i.test(f) && (!args.only || f.includes(args.only))).sort();
@@ -52,9 +54,9 @@ for (const f of files) {
   const gt = expected[f];
   const hint = args.blind ? "hex-pointy" : (gt?.shape ?? guessShape(f));
   // Warm-up run so the timing reflects JIT-compiled code (as it would after the first token in a session).
-  if (!rows.length) detectBorder(img, { shape: hint, method: args.method });
+  if (!rows.length) detectBorder(img, { shape: hint, method: args.method, ...extra });
   const t0 = performance.now();
-  const r = detectBorder(img, { shape: hint, method: args.method ?? "hough" });
+  const r = detectBorder(img, { shape: hint, method: args.method ?? "hough", ...extra });
   const ms = performance.now() - t0;
 
   let err = null, pass = null;
